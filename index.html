@@ -1,0 +1,819 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+<meta name="theme-color" content="#1a1a1a" />
+<title>스도쿠</title>
+<style>
+  :root {
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #1f2328;
+    --muted: #6b7280;
+    --line: #cfd2d6;
+    --line-strong: #1f2328;
+    --given: #1f2328;
+    --user: #1f5fd6;
+    --sel: #cfe2ff;
+    --peer: #eaf1fb;
+    --same: #fff3b0;
+    --conflict: #ffd5d5;
+    --btn: #f0f1f3;
+    --btn-active: #1f5fd6;
+    --btn-active-ink: #ffffff;
+    --memo: #6b7280;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a;
+      --panel: #1c1f24;
+      --ink: #e8eaed;
+      --muted: #9aa1a9;
+      --line: #2c3138;
+      --line-strong: #e8eaed;
+      --given: #e8eaed;
+      --user: #6ea8ff;
+      --sel: #2a3a5b;
+      --peer: #1f2733;
+      --same: #4a3f1a;
+      --conflict: #5a2424;
+      --btn: #262a30;
+      --btn-active: #6ea8ff;
+      --btn-active-ink: #14161a;
+      --memo: #8b929b;
+    }
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; padding: 0; height: 100%;
+    background: var(--bg); color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
+    overscroll-behavior: none;
+  }
+  body {
+    display: flex; flex-direction: column; align-items: center;
+    padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  }
+  .app { width: 100%; max-width: 480px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+  header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  header h1 { margin: 0; font-size: 18px; font-weight: 600; letter-spacing: 0.02em; }
+  .meta { font-size: 12px; color: var(--muted); display: flex; gap: 10px; align-items: center; }
+  .meta .pill {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
+    padding: 4px 10px; font-variant-numeric: tabular-nums;
+  }
+
+  .board-wrap { width: 100%; aspect-ratio: 1 / 1; position: relative; }
+  .board {
+    width: 100%; height: 100%;
+    background: var(--panel);
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    grid-template-rows: repeat(9, 1fr);
+    border: 2px solid var(--line-strong);
+    border-radius: 6px;
+    overflow: hidden;
+    user-select: none;
+    touch-action: manipulation;
+  }
+  .cell {
+    position: relative;
+    border-right: 1px solid var(--line);
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; justify-content: center;
+    font-size: clamp(18px, 5.5vw, 28px);
+    font-weight: 500;
+    color: var(--user);
+    cursor: pointer;
+    background: var(--panel);
+  }
+  .cell.given { color: var(--given); font-weight: 700; }
+  .cell:nth-child(9n) { border-right: none; }
+  .cell:nth-child(n+73) { border-bottom: none; }
+  /* thick block borders */
+  .cell[data-col="2"], .cell[data-col="5"] { border-right: 2px solid var(--line-strong); }
+  .cell[data-row="2"], .cell[data-row="5"] { border-bottom: 2px solid var(--line-strong); }
+
+  .cell.peer { background: var(--peer); }
+  .cell.same { background: var(--same); }
+  .cell.selected { background: var(--sel); }
+  .cell.conflict { background: var(--conflict); }
+  .cell.conflict.selected { background: var(--conflict); }
+
+  .memo {
+    position: absolute; inset: 4%;
+    display: grid; grid-template-columns: repeat(3, 1fr); grid-template-rows: repeat(3, 1fr);
+    color: var(--memo);
+    font-size: clamp(8px, 1.9vw, 11px);
+    font-weight: 600;
+    pointer-events: none;
+  }
+  .memo span { display: flex; align-items: center; justify-content: center; opacity: 0; }
+  .memo span.on { opacity: 1; }
+
+  .controls { display: flex; flex-direction: column; gap: 8px; }
+  .row { display: flex; gap: 8px; }
+  .row.actions { justify-content: space-between; }
+  .btn {
+    flex: 1; min-height: 44px;
+    background: var(--btn); color: var(--ink);
+    border: none; border-radius: 10px;
+    font-size: 14px; font-weight: 600;
+    cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+    padding: 0 10px;
+    touch-action: manipulation;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn.toggle.on { background: var(--btn-active); color: var(--btn-active-ink); }
+  .btn .sub { font-size: 11px; font-weight: 500; opacity: 0.7; }
+
+  .pad { display: grid; grid-template-columns: repeat(9, 1fr); gap: 6px; }
+  .pad .num {
+    aspect-ratio: 1 / 1;
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    font-size: clamp(18px, 5vw, 22px);
+    font-weight: 600;
+    color: var(--ink);
+    cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    position: relative;
+    touch-action: manipulation;
+  }
+  .pad .num:active { transform: scale(0.95); }
+  .pad .num.done { color: var(--muted); opacity: 0.45; }
+  .pad .num .count {
+    position: absolute; right: 3px; top: 2px;
+    font-size: 9px; color: var(--muted); font-weight: 500;
+  }
+
+  .toast {
+    position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
+    background: var(--ink); color: var(--bg);
+    padding: 10px 14px; border-radius: 999px; font-size: 13px;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none;
+    z-index: 10;
+  }
+  .toast.show { opacity: 0.95; }
+
+  .modal {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+    display: none; align-items: center; justify-content: center;
+    padding: 16px; z-index: 20;
+  }
+  .modal.show { display: flex; }
+  .modal .card {
+    background: var(--panel); color: var(--ink);
+    border-radius: 14px; padding: 18px; width: 100%; max-width: 360px;
+    display: flex; flex-direction: column; gap: 12px;
+  }
+  .modal h2 { margin: 0; font-size: 16px; }
+  .modal p { margin: 0; font-size: 13px; color: var(--muted); line-height: 1.5; }
+  .modal .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+  .modal .grid3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; }
+
+  @media (hover: hover) {
+    .btn:hover, .pad .num:hover { filter: brightness(0.97); }
+  }
+  @media (max-width: 360px) {
+    .btn { font-size: 13px; }
+  }
+</style>
+</head>
+<body>
+  <div class="app">
+    <header>
+      <h1>스도쿠</h1>
+      <div class="meta">
+        <span class="pill" id="difficultyLabel">—</span>
+        <span class="pill" id="timer">00:00</span>
+      </div>
+    </header>
+
+    <div class="board-wrap">
+      <div class="board" id="board" aria-label="스도쿠 보드"></div>
+    </div>
+
+    <div class="controls">
+      <div class="row actions">
+        <button class="btn" id="undoBtn" title="실행 취소 (Ctrl+Z)">↶ 되돌리기</button>
+        <button class="btn" id="eraseBtn" title="지우기 (Backspace)">⌫ 지우기</button>
+        <button class="btn toggle" id="memoBtn" title="메모 모드 (M)">✎ 메모</button>
+      </div>
+      <div class="pad" id="pad"></div>
+      <div class="row actions">
+        <button class="btn" id="newBtn">＋ 새 게임</button>
+        <button class="btn" id="shareBtn">⇪ 공유</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <div class="modal" id="newModal">
+    <div class="card">
+      <h2>새 게임</h2>
+      <p>난이도를 선택하세요. 현재 진행은 사라집니다.</p>
+      <div class="grid3">
+        <button class="btn" data-diff="easy">쉬움</button>
+        <button class="btn" data-diff="medium">보통</button>
+        <button class="btn" data-diff="hard">어려움</button>
+      </div>
+      <div class="grid2">
+        <button class="btn" data-diff="evil">아주 어려움</button>
+        <button class="btn" id="newCancel">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="winModal">
+    <div class="card">
+      <h2>🎉 완성!</h2>
+      <p id="winText">잘 했어요.</p>
+      <div class="grid2">
+        <button class="btn" id="winNew">새 게임</button>
+        <button class="btn" id="winClose">닫기</button>
+      </div>
+    </div>
+  </div>
+
+<script>
+(() => {
+  'use strict';
+
+  // ---------- Sudoku core ----------
+  const N = 9;
+  const idx = (r, c) => r * 9 + c;
+  const rng = (n) => Math.floor(Math.random() * n);
+  const shuffle = (a) => {
+    for (let i = a.length - 1; i > 0; i--) {
+      const j = rng(i + 1);
+      [a[i], a[j]] = [a[j], a[i]];
+    }
+    return a;
+  };
+
+  function isSafe(g, r, c, v) {
+    for (let i = 0; i < 9; i++) {
+      if (g[idx(r, i)] === v || g[idx(i, c)] === v) return false;
+    }
+    const br = Math.floor(r / 3) * 3, bc = Math.floor(c / 3) * 3;
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 3; j++) {
+      if (g[idx(br + i, bc + j)] === v) return false;
+    }
+    return true;
+  }
+
+  function solve(g, countLimit = 1, count = { n: 0 }) {
+    for (let i = 0; i < 81; i++) {
+      if (g[i] === 0) {
+        const r = Math.floor(i / 9), c = i % 9;
+        for (let v = 1; v <= 9; v++) {
+          if (isSafe(g, r, c, v)) {
+            g[i] = v;
+            solve(g, countLimit, count);
+            if (count.n >= countLimit) { g[i] = 0; return count.n; }
+            g[i] = 0;
+          }
+        }
+        return count.n;
+      }
+    }
+    count.n++;
+    return count.n;
+  }
+
+  function fillSolution() {
+    const g = new Uint8Array(81);
+    function fill(i) {
+      if (i === 81) return true;
+      const r = Math.floor(i / 9), c = i % 9;
+      const nums = shuffle([1,2,3,4,5,6,7,8,9]);
+      for (const v of nums) {
+        if (isSafe(g, r, c, v)) {
+          g[i] = v;
+          if (fill(i + 1)) return true;
+          g[i] = 0;
+        }
+      }
+      return false;
+    }
+    fill(0);
+    return g;
+  }
+
+  function generate(difficulty = 'medium') {
+    const targets = { easy: 38, medium: 32, hard: 27, evil: 24 };
+    const target = targets[difficulty] ?? 32;
+    const solution = fillSolution();
+    const puzzle = new Uint8Array(solution);
+    const order = shuffle([...Array(81).keys()]);
+    let filled = 81;
+    for (const i of order) {
+      if (filled <= target) break;
+      const saved = puzzle[i];
+      puzzle[i] = 0;
+      const test = new Uint8Array(puzzle);
+      const count = { n: 0 };
+      solve(test, 2, count);
+      if (count.n !== 1) {
+        puzzle[i] = saved;
+      } else {
+        filled--;
+      }
+    }
+    return { puzzle, solution };
+  }
+
+  // ---------- State ----------
+  const state = {
+    givens: new Uint8Array(81),   // 0 = empty
+    values: new Uint8Array(81),   // user values (includes givens)
+    memos: new Uint16Array(81),   // bitmask, bit (n-1) for digit n
+    solution: new Uint8Array(81),
+    selected: null,               // index 0..80
+    memoMode: false,
+    history: [],                  // {idx, prevValue, prevMemo}
+    difficulty: 'medium',
+    startTs: Date.now(),
+    elapsedBeforeStart: 0,
+    finished: false,
+  };
+
+  // ---------- URL encoding ----------
+  // Format v1: "v1." + base64url( givensBytes(81) + valuesBytes(81) + memoBytes(162) + solutionBytes(81) + diffByte )
+  // We pack 4-bit givens/values into 41 bytes? Keep it simple: 81 + 81 + 162 + 81 + 1 = 406 bytes -> ~542 b64 chars. Compress with simple RLE? Keep simple.
+  function toB64Url(bytes) {
+    let s = '';
+    for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]);
+    return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  }
+  function fromB64Url(str) {
+    str = str.replace(/-/g, '+').replace(/_/g, '/');
+    while (str.length % 4) str += '=';
+    const bin = atob(str);
+    const out = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+    return out;
+  }
+
+  function encodeState() {
+    const diffMap = { easy: 1, medium: 2, hard: 3, evil: 4 };
+    const buf = new Uint8Array(81 + 81 + 162 + 81 + 1 + 4);
+    let p = 0;
+    buf.set(state.givens, p); p += 81;
+    buf.set(state.values, p); p += 81;
+    for (let i = 0; i < 81; i++) {
+      const m = state.memos[i];
+      buf[p++] = m & 0xff;
+      buf[p++] = (m >> 8) & 0xff;
+    }
+    buf.set(state.solution, p); p += 81;
+    buf[p++] = diffMap[state.difficulty] || 2;
+    const elapsed = currentElapsedSeconds();
+    buf[p++] = elapsed & 0xff;
+    buf[p++] = (elapsed >> 8) & 0xff;
+    buf[p++] = (elapsed >> 16) & 0xff;
+    buf[p++] = (elapsed >> 24) & 0xff;
+    return 'v1.' + toB64Url(buf);
+  }
+
+  function decodeState(hash) {
+    if (!hash.startsWith('v1.')) throw new Error('unknown format');
+    const buf = fromB64Url(hash.slice(3));
+    if (buf.length < 81 + 81 + 162 + 81 + 1) throw new Error('too short');
+    let p = 0;
+    const givens = buf.slice(p, p + 81); p += 81;
+    const values = buf.slice(p, p + 81); p += 81;
+    const memos = new Uint16Array(81);
+    for (let i = 0; i < 81; i++) {
+      memos[i] = buf[p] | (buf[p + 1] << 8);
+      p += 2;
+    }
+    const solution = buf.slice(p, p + 81); p += 81;
+    const diffByte = buf[p++];
+    const diffMap = { 1: 'easy', 2: 'medium', 3: 'hard', 4: 'evil' };
+    const difficulty = diffMap[diffByte] || 'medium';
+    let elapsed = 0;
+    if (buf.length >= p + 4) {
+      elapsed = buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24);
+    }
+    return { givens, values, memos, solution, difficulty, elapsed };
+  }
+
+  // ---------- DOM ----------
+  const boardEl = document.getElementById('board');
+  const padEl = document.getElementById('pad');
+  const memoBtn = document.getElementById('memoBtn');
+  const undoBtn = document.getElementById('undoBtn');
+  const eraseBtn = document.getElementById('eraseBtn');
+  const newBtn = document.getElementById('newBtn');
+  const shareBtn = document.getElementById('shareBtn');
+  const newModal = document.getElementById('newModal');
+  const winModal = document.getElementById('winModal');
+  const timerEl = document.getElementById('timer');
+  const difficultyLabel = document.getElementById('difficultyLabel');
+  const toastEl = document.getElementById('toast');
+
+  const cellEls = [];
+
+  function buildBoard() {
+    boardEl.innerHTML = '';
+    cellEls.length = 0;
+    for (let i = 0; i < 81; i++) {
+      const r = Math.floor(i / 9), c = i % 9;
+      const cell = document.createElement('div');
+      cell.className = 'cell';
+      cell.dataset.row = r;
+      cell.dataset.col = c;
+      cell.dataset.idx = i;
+      const memo = document.createElement('div');
+      memo.className = 'memo';
+      for (let n = 1; n <= 9; n++) {
+        const span = document.createElement('span');
+        span.textContent = n;
+        memo.appendChild(span);
+      }
+      const text = document.createElement('div');
+      text.className = 'val';
+      cell.appendChild(memo);
+      cell.appendChild(text);
+      cell._memo = memo;
+      cell._text = text;
+      cell.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        selectCell(i);
+      });
+      boardEl.appendChild(cell);
+      cellEls.push(cell);
+    }
+  }
+
+  function buildPad() {
+    padEl.innerHTML = '';
+    for (let n = 1; n <= 9; n++) {
+      const b = document.createElement('button');
+      b.className = 'num';
+      b.dataset.n = n;
+      b.innerHTML = `<span class="count" data-c></span>${n}`;
+      b.addEventListener('pointerdown', (e) => {
+        e.preventDefault();
+        inputDigit(n);
+      });
+      padEl.appendChild(b);
+    }
+  }
+
+  function selectCell(i) {
+    state.selected = i;
+    render();
+  }
+
+  function render() {
+    const sel = state.selected;
+    let selR = -1, selC = -1, selB = -1, selVal = 0;
+    if (sel !== null) {
+      selR = Math.floor(sel / 9);
+      selC = sel % 9;
+      selB = Math.floor(selR / 3) * 3 + Math.floor(selC / 3);
+      selVal = state.values[sel];
+    }
+    const conflicts = computeConflicts();
+    const counts = new Array(10).fill(0);
+    for (let i = 0; i < 81; i++) {
+      if (state.values[i]) counts[state.values[i]]++;
+    }
+
+    for (let i = 0; i < 81; i++) {
+      const cell = cellEls[i];
+      const r = Math.floor(i / 9), c = i % 9;
+      const b = Math.floor(r / 3) * 3 + Math.floor(c / 3);
+      const v = state.values[i];
+      const isGiven = state.givens[i] !== 0;
+      cell.classList.toggle('given', isGiven);
+      let cls = '';
+      if (sel !== null) {
+        if (i === sel) cls = 'selected';
+        else if (r === selR || c === selC || b === selB) cls = 'peer';
+        if (selVal && v === selVal && i !== sel) cls = 'same';
+      }
+      cell.classList.toggle('peer', cls === 'peer');
+      cell.classList.toggle('same', cls === 'same');
+      cell.classList.toggle('selected', cls === 'selected');
+      cell.classList.toggle('conflict', conflicts.has(i));
+      cell._text.textContent = v ? String(v) : '';
+      const memoSpans = cell._memo.children;
+      const memo = state.memos[i];
+      const showMemo = !v && memo;
+      for (let n = 1; n <= 9; n++) {
+        memoSpans[n - 1].classList.toggle('on', showMemo && (memo & (1 << (n - 1))));
+      }
+    }
+
+    for (const btn of padEl.children) {
+      const n = Number(btn.dataset.n);
+      btn.classList.toggle('done', counts[n] >= 9);
+      const cspan = btn.querySelector('[data-c]');
+      cspan.textContent = counts[n] >= 9 ? '✓' : (9 - counts[n]);
+    }
+
+    memoBtn.classList.toggle('on', state.memoMode);
+    difficultyLabel.textContent = labelFor(state.difficulty);
+  }
+
+  function labelFor(d) {
+    return { easy: '쉬움', medium: '보통', hard: '어려움', evil: '아주 어려움' }[d] || d;
+  }
+
+  function computeConflicts() {
+    const bad = new Set();
+    // rows/cols/boxes
+    for (let g = 0; g < 9; g++) {
+      const rowSeen = {}, colSeen = {}, boxSeen = {};
+      for (let k = 0; k < 9; k++) {
+        const rR = g, rC = k;
+        const cR = k, cC = g;
+        const bR = Math.floor(g / 3) * 3 + Math.floor(k / 3);
+        const bC = (g % 3) * 3 + (k % 3);
+        const rv = state.values[idx(rR, rC)];
+        const cv = state.values[idx(cR, cC)];
+        const bv = state.values[idx(bR, bC)];
+        if (rv) {
+          if (rowSeen[rv] !== undefined) { bad.add(idx(rR, rC)); bad.add(rowSeen[rv]); }
+          else rowSeen[rv] = idx(rR, rC);
+        }
+        if (cv) {
+          if (colSeen[cv] !== undefined) { bad.add(idx(cR, cC)); bad.add(colSeen[cv]); }
+          else colSeen[cv] = idx(cR, cC);
+        }
+        if (bv) {
+          if (boxSeen[bv] !== undefined) { bad.add(idx(bR, bC)); bad.add(boxSeen[bv]); }
+          else boxSeen[bv] = idx(bR, bC);
+        }
+      }
+    }
+    return bad;
+  }
+
+  // ---------- Input actions ----------
+  function pushHistory(i) {
+    state.history.push({ idx: i, prev: state.values[i], prevMemo: state.memos[i] });
+    if (state.history.length > 500) state.history.shift();
+  }
+
+  function inputDigit(n) {
+    if (state.finished) return;
+    const i = state.selected;
+    if (i === null) return;
+    if (state.givens[i]) return;
+    if (state.memoMode) {
+      if (state.values[i]) return; // can't memo on filled cell
+      pushHistory(i);
+      state.memos[i] ^= (1 << (n - 1));
+    } else {
+      pushHistory(i);
+      if (state.values[i] === n) {
+        state.values[i] = 0; // toggle off
+      } else {
+        state.values[i] = n;
+        state.memos[i] = 0;
+        // Auto-remove this digit from peer memos
+        clearPeerMemos(i, n);
+      }
+    }
+    persistAndRender();
+    checkWin();
+  }
+
+  function clearPeerMemos(i, n) {
+    const r = Math.floor(i / 9), c = i % 9;
+    const br = Math.floor(r / 3) * 3, bc = Math.floor(c / 3) * 3;
+    const mask = ~(1 << (n - 1));
+    for (let k = 0; k < 9; k++) {
+      state.memos[idx(r, k)] &= mask;
+      state.memos[idx(k, c)] &= mask;
+    }
+    for (let dr = 0; dr < 3; dr++) for (let dc = 0; dc < 3; dc++) {
+      state.memos[idx(br + dr, bc + dc)] &= mask;
+    }
+  }
+
+  function eraseSelected() {
+    if (state.finished) return;
+    const i = state.selected;
+    if (i === null) return;
+    if (state.givens[i]) return;
+    if (!state.values[i] && !state.memos[i]) return;
+    pushHistory(i);
+    state.values[i] = 0;
+    state.memos[i] = 0;
+    persistAndRender();
+  }
+
+  function undo() {
+    const last = state.history.pop();
+    if (!last) { toast('되돌릴 게 없어요'); return; }
+    state.values[last.idx] = last.prev;
+    state.memos[last.idx] = last.prevMemo;
+    state.finished = false;
+    persistAndRender();
+  }
+
+  function toggleMemo() {
+    state.memoMode = !state.memoMode;
+    render();
+  }
+
+  function moveSelection(dr, dc) {
+    if (state.selected === null) { selectCell(0); return; }
+    let r = Math.floor(state.selected / 9) + dr;
+    let c = (state.selected % 9) + dc;
+    r = Math.max(0, Math.min(8, r));
+    c = Math.max(0, Math.min(8, c));
+    selectCell(idx(r, c));
+  }
+
+  // ---------- Win check ----------
+  function checkWin() {
+    for (let i = 0; i < 81; i++) {
+      if (state.values[i] !== state.solution[i]) return;
+    }
+    state.finished = true;
+    persist();
+    const w = document.getElementById('winText');
+    w.textContent = `${labelFor(state.difficulty)} · ${timerEl.textContent} 만에 완성!`;
+    winModal.classList.add('show');
+  }
+
+  // ---------- Persistence ----------
+  function persistAndRender() {
+    persist();
+    render();
+  }
+  let persistTimer = null;
+  function persist() {
+    if (persistTimer) clearTimeout(persistTimer);
+    persistTimer = setTimeout(() => {
+      const enc = encodeState();
+      try { localStorage.setItem('sudoku.state', enc); } catch (e) {}
+      // Update URL hash silently (no scroll)
+      history.replaceState(null, '', '#' + enc);
+    }, 80);
+  }
+
+  // ---------- Timer ----------
+  function currentElapsedSeconds() {
+    if (state.finished) return state.elapsedBeforeStart;
+    return state.elapsedBeforeStart + Math.floor((Date.now() - state.startTs) / 1000);
+  }
+  function tick() {
+    const s = currentElapsedSeconds();
+    const m = Math.floor(s / 60), ss = s % 60;
+    timerEl.textContent = String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+  }
+  setInterval(tick, 1000);
+
+  // ---------- New / Load ----------
+  function loadFromState(s) {
+    state.givens = new Uint8Array(s.givens);
+    state.values = new Uint8Array(s.values);
+    state.memos = new Uint16Array(s.memos);
+    state.solution = new Uint8Array(s.solution);
+    state.difficulty = s.difficulty;
+    state.elapsedBeforeStart = s.elapsed || 0;
+    state.startTs = Date.now();
+    state.selected = null;
+    state.memoMode = false;
+    state.history = [];
+    state.finished = false;
+    tick();
+    render();
+  }
+
+  function newGame(difficulty) {
+    toast('퍼즐 생성 중…');
+    // Yield so the toast shows before the heavy work
+    setTimeout(() => {
+      const { puzzle, solution } = generate(difficulty);
+      state.givens = new Uint8Array(puzzle);
+      state.values = new Uint8Array(puzzle);
+      state.memos = new Uint16Array(81);
+      state.solution = solution;
+      state.difficulty = difficulty;
+      state.selected = null;
+      state.memoMode = false;
+      state.history = [];
+      state.finished = false;
+      state.elapsedBeforeStart = 0;
+      state.startTs = Date.now();
+      persistAndRender();
+      tick();
+      hideToast();
+    }, 30);
+  }
+
+  function tryLoadFromHash() {
+    const h = location.hash.replace(/^#/, '');
+    if (!h) return false;
+    try {
+      const s = decodeState(h);
+      loadFromState(s);
+      return true;
+    } catch (e) {
+      console.warn('hash decode failed', e);
+      return false;
+    }
+  }
+
+  function tryLoadFromStorage() {
+    try {
+      const enc = localStorage.getItem('sudoku.state');
+      if (!enc) return false;
+      const s = decodeState(enc);
+      loadFromState(s);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  // ---------- Share ----------
+  async function share() {
+    persist();
+    const url = location.origin + location.pathname + '#' + encodeState();
+    try {
+      if (navigator.share) {
+        await navigator.share({ title: '스도쿠', url });
+        return;
+      }
+    } catch (e) { /* fall through */ }
+    try {
+      await navigator.clipboard.writeText(url);
+      toast('링크를 복사했어요');
+    } catch (e) {
+      prompt('아래 URL을 복사하세요', url);
+    }
+  }
+
+  // ---------- Toast ----------
+  let toastTimer = null;
+  function toast(msg, ms = 1500) {
+    toastEl.textContent = msg;
+    toastEl.classList.add('show');
+    if (toastTimer) clearTimeout(toastTimer);
+    toastTimer = setTimeout(hideToast, ms);
+  }
+  function hideToast() { toastEl.classList.remove('show'); }
+
+  // ---------- Keyboard ----------
+  window.addEventListener('keydown', (e) => {
+    if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
+    const k = e.key;
+    if (/^[1-9]$/.test(k)) { e.preventDefault(); inputDigit(Number(k)); return; }
+    if (k === 'Backspace' || k === 'Delete' || k === '0') { e.preventDefault(); eraseSelected(); return; }
+    if (k === 'ArrowUp')    { e.preventDefault(); moveSelection(-1, 0); return; }
+    if (k === 'ArrowDown')  { e.preventDefault(); moveSelection(1, 0); return; }
+    if (k === 'ArrowLeft')  { e.preventDefault(); moveSelection(0, -1); return; }
+    if (k === 'ArrowRight') { e.preventDefault(); moveSelection(0, 1); return; }
+    if (k === 'm' || k === 'M') { e.preventDefault(); toggleMemo(); return; }
+    if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'Z')) { e.preventDefault(); undo(); return; }
+  });
+
+  // ---------- Buttons ----------
+  memoBtn.addEventListener('click', toggleMemo);
+  undoBtn.addEventListener('click', undo);
+  eraseBtn.addEventListener('click', eraseSelected);
+  newBtn.addEventListener('click', () => newModal.classList.add('show'));
+  shareBtn.addEventListener('click', share);
+  document.getElementById('newCancel').addEventListener('click', () => newModal.classList.remove('show'));
+  newModal.addEventListener('click', (e) => {
+    if (e.target === newModal) newModal.classList.remove('show');
+    const diff = e.target.dataset && e.target.dataset.diff;
+    if (diff) {
+      newModal.classList.remove('show');
+      newGame(diff);
+    }
+  });
+  document.getElementById('winClose').addEventListener('click', () => winModal.classList.remove('show'));
+  document.getElementById('winNew').addEventListener('click', () => {
+    winModal.classList.remove('show');
+    newModal.classList.add('show');
+  });
+
+  // Prevent double-tap zoom on iOS for in-app pointers
+  document.addEventListener('gesturestart', (e) => e.preventDefault());
+
+  // ---------- Boot ----------
+  buildBoard();
+  buildPad();
+  if (!tryLoadFromHash() && !tryLoadFromStorage()) {
+    newGame('easy');
+  } else {
+    render();
+    tick();
+  }
+})();
+</script>
+</body>
+</html>
