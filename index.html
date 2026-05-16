@@ -228,6 +228,7 @@
       <div class="row actions">
         <button class="btn" id="undoBtn" title="실행 취소 (Ctrl+Z)">↶ 되돌리기</button>
         <button class="btn" id="eraseBtn" title="지우기 (Backspace)">⌫ 지우기</button>
+        <button class="btn" id="hintBtn" title="힌트 (H)">💡 힌트</button>
         <button class="btn toggle" id="memoBtn" title="메모 모드 (M)">✎ 메모</button>
       </div>
       <div class="pad" id="pad"></div>
@@ -471,6 +472,7 @@
   const memoBtn = document.getElementById('memoBtn');
   const undoBtn = document.getElementById('undoBtn');
   const eraseBtn = document.getElementById('eraseBtn');
+  const hintBtn = document.getElementById('hintBtn');
   const newBtn = document.getElementById('newBtn');
   const shareBtn = document.getElementById('shareBtn');
   const statsBtn = document.getElementById('statsBtn');
@@ -719,6 +721,122 @@
     selectCell(idx(r, c));
   }
 
+  // ---------- Hint solver (naked/hidden single only) ----------
+  // Particle 이/가 for the digit when used as subject in Korean.
+  // 받침 있는 숫자(1,3,6,7,8) → 이, 없는 숫자(2,4,5,9) → 가.
+  const I_GA = [, '이', '가', '이', '가', '가', '이', '이', '이', '가'];
+
+  function computeCandidates() {
+    const cand = new Uint16Array(81);
+    for (let i = 0; i < 81; i++) {
+      if (state.values[i]) continue;
+      const r = Math.floor(i / 9), c = i % 9;
+      const br = Math.floor(r / 3) * 3, bc = Math.floor(c / 3) * 3;
+      let used = 0;
+      for (let k = 0; k < 9; k++) {
+        const a = state.values[idx(r, k)];
+        const b = state.values[idx(k, c)];
+        if (a) used |= 1 << (a - 1);
+        if (b) used |= 1 << (b - 1);
+      }
+      for (let dr = 0; dr < 3; dr++) for (let dc = 0; dc < 3; dc++) {
+        const v = state.values[idx(br + dr, bc + dc)];
+        if (v) used |= 1 << (v - 1);
+      }
+      cand[i] = 0x1ff & ~used;
+    }
+    return cand;
+  }
+
+  function findHint() {
+    // If user has placed a value that disagrees with the solution, the
+    // candidate set is poisoned — hints derived from it would mislead.
+    for (let i = 0; i < 81; i++) {
+      const v = state.values[i];
+      if (v && state.solution[i] && v !== state.solution[i]) {
+        return { error: 'wrong' };
+      }
+    }
+    const cand = computeCandidates();
+
+    // Naked single — a cell with exactly one candidate.
+    for (let i = 0; i < 81; i++) {
+      if (state.values[i]) continue;
+      const m = cand[i];
+      if (m && (m & (m - 1)) === 0) {
+        let n = 1, mm = m;
+        while ((mm & 1) === 0) { mm >>>= 1; n++; }
+        return { technique: 'naked', idx: i, value: n };
+      }
+    }
+
+    // Hidden single — within a unit, a digit fits in only one cell.
+    function scanUnit(cells, unit, unitIndex) {
+      for (let n = 1; n <= 9; n++) {
+        const bit = 1 << (n - 1);
+        let foundIdx = -1, count = 0, already = false;
+        for (const i of cells) {
+          if (state.values[i] === n) { already = true; break; }
+          if (state.values[i] === 0 && (cand[i] & bit)) {
+            foundIdx = i;
+            count++;
+            if (count > 1) break;
+          }
+        }
+        if (!already && count === 1) {
+          return { technique: 'hidden', unit, unitIndex, idx: foundIdx, value: n };
+        }
+      }
+      return null;
+    }
+
+    for (let r = 0; r < 9; r++) {
+      const cells = [];
+      for (let c = 0; c < 9; c++) cells.push(idx(r, c));
+      const h = scanUnit(cells, 'row', r);
+      if (h) return h;
+    }
+    for (let c = 0; c < 9; c++) {
+      const cells = [];
+      for (let r = 0; r < 9; r++) cells.push(idx(r, c));
+      const h = scanUnit(cells, 'col', c);
+      if (h) return h;
+    }
+    for (let b = 0; b < 9; b++) {
+      const br = Math.floor(b / 3) * 3, bc = (b % 3) * 3;
+      const cells = [];
+      for (let dr = 0; dr < 3; dr++) for (let dc = 0; dc < 3; dc++) cells.push(idx(br + dr, bc + dc));
+      const h = scanUnit(cells, 'box', b);
+      if (h) return h;
+    }
+    return null;
+  }
+
+  function showHint() {
+    if (state.finished) return;
+    const h = findHint();
+    if (!h) {
+      toast('네이키드/히든 싱글로는 더 없어요 — 다른 기법 필요');
+      return;
+    }
+    if (h.error === 'wrong') {
+      toast('빨간 글씨 값을 먼저 확인해주세요');
+      return;
+    }
+    selectCell(h.idx);
+    let msg;
+    if (h.technique === 'naked') {
+      msg = `이 칸에는 ${h.value}만 들어갈 수 있어요`;
+    } else if (h.unit === 'row') {
+      msg = `${h.unitIndex + 1}행에서 ${h.value}${I_GA[h.value]} 들어갈 칸은 여기뿐이에요`;
+    } else if (h.unit === 'col') {
+      msg = `${h.unitIndex + 1}열에서 ${h.value}${I_GA[h.value]} 들어갈 칸은 여기뿐이에요`;
+    } else {
+      msg = `이 박스에서 ${h.value}${I_GA[h.value]} 들어갈 칸은 여기뿐이에요`;
+    }
+    toast(msg, 3500);
+  }
+
   // ---------- Stats ----------
   const STATS_KEY = 'sudoku.stats';
   const DIFFS = ['easy', 'medium', 'hard', 'evil'];
@@ -941,6 +1059,7 @@
     if (code === 'ArrowLeft')  { e.preventDefault(); moveSelection(0, -1); return; }
     if (code === 'ArrowRight') { e.preventDefault(); moveSelection(0, 1); return; }
     if (code === 'KeyM') { e.preventDefault(); toggleMemo(); return; }
+    if (code === 'KeyH') { e.preventDefault(); showHint(); return; }
     if ((e.ctrlKey || e.metaKey) && code === 'KeyZ') { e.preventDefault(); undo(); return; }
   });
 
@@ -948,6 +1067,7 @@
   memoBtn.addEventListener('click', toggleMemo);
   undoBtn.addEventListener('click', undo);
   eraseBtn.addEventListener('click', eraseSelected);
+  hintBtn.addEventListener('click', showHint);
   newBtn.addEventListener('click', () => newModal.classList.add('show'));
   shareBtn.addEventListener('click', share);
   statsBtn.addEventListener('click', () => { renderStats(); statsModal.classList.add('show'); });
