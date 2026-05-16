@@ -63,6 +63,22 @@
     background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
     padding: 4px 10px; font-variant-numeric: tabular-nums;
   }
+  .subheader {
+    display: flex; flex-wrap: wrap; gap: 6px 10px;
+    font-size: 12px; color: var(--muted);
+    align-items: center;
+    font-variant-numeric: tabular-nums;
+  }
+  .subheader .dot { opacity: 0.5; }
+  .subheader .mistakes.has { color: #d23a3a; font-weight: 600; }
+  @media (prefers-color-scheme: dark) {
+    .subheader .mistakes.has { color: #ff7a7a; }
+  }
+  .stats-list { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
+  .stats-list .row-stat { display: grid; grid-template-columns: 80px 1fr; gap: 8px; }
+  .stats-list .row-stat .k { color: var(--muted); }
+  .stats-list .row-stat .v { font-variant-numeric: tabular-nums; }
+  .stats-empty { color: var(--muted); font-size: 13px; }
 
   .board-wrap { width: 100%; aspect-ratio: 1 / 1; position: relative; }
   .board {
@@ -111,6 +127,7 @@
   }
   .memo span { display: flex; align-items: center; justify-content: center; opacity: 0; }
   .memo span.on { opacity: 1; }
+  .memo span.hl { color: var(--user); font-weight: 800; opacity: 1; transform: scale(1.15); }
 
   .controls { display: flex; flex-direction: column; gap: 8px; }
   .row { display: flex; gap: 8px; }
@@ -188,10 +205,16 @@
     <header>
       <h1>스도쿠</h1>
       <div class="meta">
-        <span class="pill" id="difficultyLabel">—</span>
         <span class="pill" id="timer">00:00</span>
       </div>
     </header>
+    <div class="subheader">
+      <span id="difficultyLabel">—</span>
+      <span class="dot">·</span>
+      <span id="puzzleId">#······</span>
+      <span class="dot">·</span>
+      <span class="mistakes" id="mistakes">실수 0</span>
+    </div>
 
     <div class="board-wrap">
       <div class="board" id="board" aria-label="스도쿠 보드"></div>
@@ -206,6 +229,7 @@
       <div class="pad" id="pad"></div>
       <div class="row actions">
         <button class="btn" id="newBtn">＋ 새 게임</button>
+        <button class="btn" id="statsBtn">📊 통계</button>
         <button class="btn" id="shareBtn">⇪ 공유</button>
       </div>
     </div>
@@ -225,6 +249,17 @@
       <div class="grid2">
         <button class="btn" data-diff="evil">아주 어려움</button>
         <button class="btn" id="newCancel">취소</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="statsModal">
+    <div class="card">
+      <h2>통계</h2>
+      <div id="statsBody"></div>
+      <div class="grid2">
+        <button class="btn" id="statsReset">기록 초기화</button>
+        <button class="btn" id="statsClose">닫기</button>
       </div>
     </div>
   </div>
@@ -336,11 +371,14 @@
     solution: new Uint8Array(81),
     selected: null,               // index 0..80
     memoMode: false,
-    history: [],                  // {idx, prevValue, prevMemo}
+    history: [],                  // {idx, prev, prevMemo, prevMistakes}
     difficulty: 'medium',
     startTs: Date.now(),
     elapsedBeforeStart: 0,
     finished: false,
+    mistakes: 0,
+    puzzleId: '······',
+    recorded: false,              // whether this completion was already added to stats
   };
 
   // ---------- URL encoding ----------
@@ -362,7 +400,7 @@
 
   function encodeState() {
     const diffMap = { easy: 1, medium: 2, hard: 3, evil: 4 };
-    const buf = new Uint8Array(81 + 81 + 162 + 81 + 1 + 4);
+    const buf = new Uint8Array(81 + 81 + 162 + 81 + 1 + 4 + 2);
     let p = 0;
     buf.set(state.givens, p); p += 81;
     buf.set(state.values, p); p += 81;
@@ -378,6 +416,9 @@
     buf[p++] = (elapsed >> 8) & 0xff;
     buf[p++] = (elapsed >> 16) & 0xff;
     buf[p++] = (elapsed >> 24) & 0xff;
+    const mistakes = Math.min(0xffff, state.mistakes);
+    buf[p++] = mistakes & 0xff;
+    buf[p++] = (mistakes >> 8) & 0xff;
     return 'v1.' + toB64Url(buf);
   }
 
@@ -400,8 +441,24 @@
     let elapsed = 0;
     if (buf.length >= p + 4) {
       elapsed = buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24);
+      p += 4;
     }
-    return { givens, values, memos, solution, difficulty, elapsed };
+    let mistakes = 0;
+    if (buf.length >= p + 2) {
+      mistakes = buf[p] | (buf[p + 1] << 8);
+      p += 2;
+    }
+    return { givens, values, memos, solution, difficulty, elapsed, mistakes };
+  }
+
+  // 6-char identifier derived from givens. Same puzzle => same id.
+  function puzzleIdFor(givens) {
+    let h = 5381 >>> 0;
+    for (let i = 0; i < 81; i++) {
+      h = (((h << 5) + h) ^ givens[i]) >>> 0;
+    }
+    const s = h.toString(36).toUpperCase();
+    return ('000000' + s).slice(-6);
   }
 
   // ---------- DOM ----------
@@ -412,10 +469,14 @@
   const eraseBtn = document.getElementById('eraseBtn');
   const newBtn = document.getElementById('newBtn');
   const shareBtn = document.getElementById('shareBtn');
+  const statsBtn = document.getElementById('statsBtn');
   const newModal = document.getElementById('newModal');
   const winModal = document.getElementById('winModal');
+  const statsModal = document.getElementById('statsModal');
   const timerEl = document.getElementById('timer');
   const difficultyLabel = document.getElementById('difficultyLabel');
+  const puzzleIdEl = document.getElementById('puzzleId');
+  const mistakesEl = document.getElementById('mistakes');
   const toastEl = document.getElementById('toast');
 
   const cellEls = [];
@@ -509,7 +570,9 @@
       const memo = state.memos[i];
       const showMemo = !v && memo;
       for (let n = 1; n <= 9; n++) {
-        memoSpans[n - 1].classList.toggle('on', showMemo && (memo & (1 << (n - 1))));
+        const on = !!(showMemo && (memo & (1 << (n - 1))));
+        memoSpans[n - 1].classList.toggle('on', on);
+        memoSpans[n - 1].classList.toggle('hl', on && selVal !== 0 && n === selVal);
       }
     }
 
@@ -522,6 +585,9 @@
 
     memoBtn.classList.toggle('on', state.memoMode);
     difficultyLabel.textContent = labelFor(state.difficulty);
+    puzzleIdEl.textContent = '#' + state.puzzleId;
+    mistakesEl.textContent = '실수 ' + state.mistakes;
+    mistakesEl.classList.toggle('has', state.mistakes > 0);
   }
 
   function labelFor(d) {
@@ -560,7 +626,12 @@
 
   // ---------- Input actions ----------
   function pushHistory(i) {
-    state.history.push({ idx: i, prev: state.values[i], prevMemo: state.memos[i] });
+    state.history.push({
+      idx: i,
+      prev: state.values[i],
+      prevMemo: state.memos[i],
+      prevMistakes: state.mistakes,
+    });
     if (state.history.length > 500) state.history.shift();
   }
 
@@ -582,6 +653,10 @@
         state.memos[i] = 0;
         // Auto-remove this digit from peer memos
         clearPeerMemos(i, n);
+        // Silently count a mistake when the placed value disagrees with the solution.
+        if (state.solution[i] && n !== state.solution[i]) {
+          state.mistakes++;
+        }
       }
     }
     persistAndRender();
@@ -618,6 +693,7 @@
     if (!last) { toast('되돌릴 게 없어요'); return; }
     state.values[last.idx] = last.prev;
     state.memos[last.idx] = last.prevMemo;
+    if (typeof last.prevMistakes === 'number') state.mistakes = last.prevMistakes;
     state.finished = false;
     persistAndRender();
   }
@@ -636,15 +712,77 @@
     selectCell(idx(r, c));
   }
 
+  // ---------- Stats ----------
+  const STATS_KEY = 'sudoku.stats';
+  const DIFFS = ['easy', 'medium', 'hard', 'evil'];
+  function loadStats() {
+    try {
+      const raw = localStorage.getItem(STATS_KEY);
+      if (!raw) return {};
+      return JSON.parse(raw) || {};
+    } catch (e) { return {}; }
+  }
+  function saveStats(s) {
+    try { localStorage.setItem(STATS_KEY, JSON.stringify(s)); } catch (e) {}
+  }
+  function recordCompletion(diff, timeSec, mistakes) {
+    const stats = loadStats();
+    if (!stats[diff]) stats[diff] = { count: 0, totalTime: 0, bestTime: null, perfectCount: 0, bestPerfectTime: null };
+    const s = stats[diff];
+    s.count++;
+    s.totalTime += timeSec;
+    if (s.bestTime === null || timeSec < s.bestTime) s.bestTime = timeSec;
+    if (mistakes === 0) {
+      s.perfectCount++;
+      if (s.bestPerfectTime === null || timeSec < s.bestPerfectTime) s.bestPerfectTime = timeSec;
+    }
+    saveStats(stats);
+  }
+  function formatTime(sec) {
+    if (sec === null || sec === undefined) return '—';
+    const m = Math.floor(sec / 60), ss = sec % 60;
+    return String(m).padStart(2, '0') + ':' + String(ss).padStart(2, '0');
+  }
+  function renderStats() {
+    const stats = loadStats();
+    const body = document.getElementById('statsBody');
+    const parts = [];
+    let any = false;
+    for (const d of DIFFS) {
+      const s = stats[d];
+      if (!s || s.count === 0) continue;
+      any = true;
+      const avg = Math.floor(s.totalTime / s.count);
+      parts.push(`<div style="margin-top:8px"><b>${labelFor(d)}</b></div>`);
+      parts.push('<div class="stats-list">');
+      parts.push(`<div class="row-stat"><span class="k">완료</span><span class="v">${s.count}판</span></div>`);
+      parts.push(`<div class="row-stat"><span class="k">최고 기록</span><span class="v">${formatTime(s.bestTime)}</span></div>`);
+      parts.push(`<div class="row-stat"><span class="k">평균</span><span class="v">${formatTime(avg)}</span></div>`);
+      parts.push(`<div class="row-stat"><span class="k">무실수</span><span class="v">${s.perfectCount}판${s.bestPerfectTime !== null ? ' · 최고 ' + formatTime(s.bestPerfectTime) : ''}</span></div>`);
+      parts.push('</div>');
+    }
+    body.innerHTML = any ? parts.join('') : '<div class="stats-empty">아직 완료한 게임이 없어요.</div>';
+  }
+
   // ---------- Win check ----------
   function checkWin() {
     for (let i = 0; i < 81; i++) {
       if (state.values[i] !== state.solution[i]) return;
     }
     state.finished = true;
+    const timeSec = currentElapsedSeconds();
+    if (!state.recorded) {
+      recordCompletion(state.difficulty, timeSec, state.mistakes);
+      state.recorded = true;
+    }
     persist();
+    const stats = loadStats()[state.difficulty] || {};
     const w = document.getElementById('winText');
-    w.textContent = `${labelFor(state.difficulty)} · ${timerEl.textContent} 만에 완성!`;
+    const perfectNote = state.mistakes === 0 ? ' · 무실수!' : ` · 실수 ${state.mistakes}`;
+    const bestNote = stats.bestTime !== null && stats.bestTime !== undefined
+      ? ` · 최고 ${formatTime(stats.bestTime)}`
+      : '';
+    w.textContent = `${labelFor(state.difficulty)} · ${formatTime(timeSec)}${perfectNote}${bestNote}`;
     winModal.classList.add('show');
   }
 
@@ -689,6 +827,11 @@
     state.memoMode = false;
     state.history = [];
     state.finished = false;
+    state.mistakes = s.mistakes || 0;
+    state.puzzleId = puzzleIdFor(state.givens);
+    // Resumed games shouldn't double-count toward stats; we mark recorded
+    // only after the user finishes from a fresh newGame() call.
+    state.recorded = false;
     tick();
     render();
   }
@@ -709,6 +852,9 @@
       state.finished = false;
       state.elapsedBeforeStart = 0;
       state.startTs = Date.now();
+      state.mistakes = 0;
+      state.puzzleId = puzzleIdFor(state.givens);
+      state.recorded = false;
       persistAndRender();
       tick();
       hideToast();
@@ -767,17 +913,22 @@
   function hideToast() { toastEl.classList.remove('show'); }
 
   // ---------- Keyboard ----------
+  // Use e.code (physical key) instead of e.key so shortcuts work
+  // regardless of IME state (e.g. 한글 입력 모드에서도 동작).
   window.addEventListener('keydown', (e) => {
     if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')) return;
-    const k = e.key;
-    if (/^[1-9]$/.test(k)) { e.preventDefault(); inputDigit(Number(k)); return; }
-    if (k === 'Backspace' || k === 'Delete' || k === '0') { e.preventDefault(); eraseSelected(); return; }
-    if (k === 'ArrowUp')    { e.preventDefault(); moveSelection(-1, 0); return; }
-    if (k === 'ArrowDown')  { e.preventDefault(); moveSelection(1, 0); return; }
-    if (k === 'ArrowLeft')  { e.preventDefault(); moveSelection(0, -1); return; }
-    if (k === 'ArrowRight') { e.preventDefault(); moveSelection(0, 1); return; }
-    if (k === 'm' || k === 'M') { e.preventDefault(); toggleMemo(); return; }
-    if ((e.ctrlKey || e.metaKey) && (k === 'z' || k === 'Z')) { e.preventDefault(); undo(); return; }
+    const code = e.code;
+    const digitMatch = code && code.match(/^(?:Digit|Numpad)([1-9])$/);
+    if (digitMatch) { e.preventDefault(); inputDigit(Number(digitMatch[1])); return; }
+    if (code === 'Backspace' || code === 'Delete' || code === 'Digit0' || code === 'Numpad0') {
+      e.preventDefault(); eraseSelected(); return;
+    }
+    if (code === 'ArrowUp')    { e.preventDefault(); moveSelection(-1, 0); return; }
+    if (code === 'ArrowDown')  { e.preventDefault(); moveSelection(1, 0); return; }
+    if (code === 'ArrowLeft')  { e.preventDefault(); moveSelection(0, -1); return; }
+    if (code === 'ArrowRight') { e.preventDefault(); moveSelection(0, 1); return; }
+    if (code === 'KeyM') { e.preventDefault(); toggleMemo(); return; }
+    if ((e.ctrlKey || e.metaKey) && code === 'KeyZ') { e.preventDefault(); undo(); return; }
   });
 
   // ---------- Buttons ----------
@@ -786,6 +937,17 @@
   eraseBtn.addEventListener('click', eraseSelected);
   newBtn.addEventListener('click', () => newModal.classList.add('show'));
   shareBtn.addEventListener('click', share);
+  statsBtn.addEventListener('click', () => { renderStats(); statsModal.classList.add('show'); });
+  document.getElementById('statsClose').addEventListener('click', () => statsModal.classList.remove('show'));
+  document.getElementById('statsReset').addEventListener('click', () => {
+    if (confirm('모든 기록을 초기화할까요?')) {
+      try { localStorage.removeItem(STATS_KEY); } catch (e) {}
+      renderStats();
+    }
+  });
+  statsModal.addEventListener('click', (e) => {
+    if (e.target === statsModal) statsModal.classList.remove('show');
+  });
   document.getElementById('newCancel').addEventListener('click', () => newModal.classList.remove('show'));
   newModal.addEventListener('click', (e) => {
     if (e.target === newModal) newModal.classList.remove('show');
