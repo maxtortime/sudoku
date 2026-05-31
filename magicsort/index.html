@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover,user-scalable=no" />
+<meta name="theme-color" content="#2d2a4a" />
+<title>매직 소트</title>
+<style>
+  :root {
+    --bg: #2d2a4a;
+    --bg-2: #3a3660;
+    --panel: #221f3d;
+    --ink: #ffffff;
+    --muted: #b7b3d6;
+    --glass: rgba(255, 255, 255, 0.18);
+    --glass-edge: rgba(140, 200, 255, 0.55);
+    --glass-shine: rgba(255, 255, 255, 0.35);
+    --cork: #d8a85a;
+    --cork-shadow: #8a6a2f;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+  html, body {
+    margin: 0; padding: 0; min-height: 100%;
+    background: linear-gradient(180deg, var(--bg) 0%, var(--bg-2) 100%);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
+    overscroll-behavior: none;
+  }
+  body { display: flex; flex-direction: column; align-items: center; padding: 16px 12px 32px; }
+  header {
+    width: 100%; max-width: 560px;
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; margin-bottom: 10px;
+  }
+  .back {
+    color: var(--muted); text-decoration: none; font-size: 14px;
+    padding: 6px 10px; border-radius: 8px;
+  }
+  .back:hover { background: rgba(255,255,255,0.06); color: var(--ink); }
+  h1 { font-size: 18px; margin: 0; font-weight: 600; letter-spacing: 0.02em; }
+  .controls { display: flex; gap: 8px; }
+  button {
+    font: inherit; color: var(--ink);
+    background: rgba(255,255,255,0.10);
+    border: 1px solid rgba(255,255,255,0.18);
+    padding: 8px 14px; border-radius: 10px; cursor: pointer;
+    transition: background .15s, transform .08s;
+  }
+  button:hover { background: rgba(255,255,255,0.18); }
+  button:active { transform: scale(0.97); }
+  .status {
+    color: var(--muted); font-size: 13px; margin: 4px 0 12px;
+    min-height: 18px; text-align: center;
+  }
+  .stage {
+    width: 100%; max-width: 560px;
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 18px 14px;
+    padding: 8px 4px 24px;
+    justify-items: center;
+  }
+  /* Bottle */
+  .bottle {
+    --w: 64px;
+    --h: 200px;
+    --slots: 4;
+    position: relative;
+    width: var(--w);
+    height: var(--h);
+    cursor: pointer;
+    transition: transform .18s ease;
+  }
+  .bottle.selected { transform: translateY(-14px); }
+  .bottle.locked { cursor: default; }
+  .bottle.invalid { animation: shake .35s ease; }
+  @keyframes shake {
+    0%,100% { transform: translateX(0); }
+    20% { transform: translateX(-6px); }
+    40% { transform: translateX(6px); }
+    60% { transform: translateX(-4px); }
+    80% { transform: translateX(4px); }
+  }
+  .neck {
+    position: absolute; left: 50%; top: 0; transform: translateX(-50%);
+    width: calc(var(--w) * 0.62);
+    height: 14px;
+    background: var(--glass);
+    border: 2px solid var(--glass-edge);
+    border-bottom: none;
+    border-radius: 6px 6px 0 0;
+    box-shadow: inset 4px 0 0 rgba(255,255,255,0.12);
+  }
+  .body {
+    position: absolute; left: 0; right: 0; top: 14px; bottom: 0;
+    background: var(--glass);
+    border: 2px solid var(--glass-edge);
+    border-radius: 14px 14px 22px 22px;
+    overflow: hidden;
+    box-shadow:
+      inset 6px 0 0 rgba(255,255,255,0.10),
+      inset -3px -6px 0 rgba(0,0,0,0.18);
+  }
+  .liquid-stack {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    display: flex; flex-direction: column-reverse;
+    height: 100%;
+  }
+  .liquid {
+    width: 100%;
+    height: calc(100% / var(--slots));
+    transition: height .25s ease, background .2s;
+    position: relative;
+  }
+  .liquid::before {
+    content: "";
+    position: absolute; left: 0; right: 0; top: 0; height: 30%;
+    background: linear-gradient(180deg, rgba(255,255,255,0.25), rgba(255,255,255,0));
+    pointer-events: none;
+  }
+  /* Shine over glass */
+  .shine {
+    position: absolute; top: 16px; left: 18%; width: 8%; height: 70%;
+    background: linear-gradient(180deg, var(--glass-shine), rgba(255,255,255,0));
+    border-radius: 4px;
+    pointer-events: none;
+  }
+  /* Cork shown when bottle is locked (all 4 same color) */
+  .cork {
+    position: absolute; left: 50%; top: -8px; transform: translateX(-50%);
+    width: calc(var(--w) * 0.68);
+    height: 16px;
+    background: linear-gradient(180deg, #e7bf75, var(--cork));
+    border-radius: 4px 4px 3px 3px;
+    box-shadow: inset 0 -3px 0 var(--cork-shadow), 0 2px 4px rgba(0,0,0,0.25);
+    display: none;
+  }
+  .bottle.locked .cork { display: block; }
+
+  footer {
+    color: var(--muted); font-size: 12px; margin-top: 12px;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <a class="back" href="../index.html" onclick="if(history.length>1){history.back();return false;}">← 목록</a>
+    <h1>매직 소트</h1>
+    <div class="controls">
+      <button id="restart">다시</button>
+      <button id="new">새 판</button>
+    </div>
+  </header>
+  <div class="status" id="status">병을 눌러 액체를 옮기세요</div>
+  <div class="stage" id="stage"></div>
+  <footer>같은 색 4칸을 모으면 병이 닫혀요</footer>
+
+<script>
+(() => {
+  const SLOT_COUNT = 4;
+  const COLORS = [
+    '#ff3ea5', // pink
+    '#f5f5f5', // white
+    '#1a1a1a', // black
+    '#3ec8ff', // cyan
+    '#ffd23e', // yellow
+    '#7c4dff', // purple
+    '#3eff7a', // green
+    '#ff7a3e', // orange
+  ];
+
+  // Game state: bottles[i] = array of color indices, bottom-first
+  let bottles = [];
+  let selected = -1;
+  let busy = false;
+
+  const stage = document.getElementById('stage');
+  const status = document.getElementById('status');
+
+  function generate(colorCount, emptyBottles = 2) {
+    const colors = COLORS.slice(0, colorCount);
+    // Start from solved state, then shuffle by random valid-ish moves
+    const filled = colors.map((_, ci) => Array(SLOT_COUNT).fill(ci));
+    const empties = Array.from({length: emptyBottles}, () => []);
+    const all = [...filled, ...empties];
+    // Random shuffle: do many random swaps of single units to scramble
+    const flat = [];
+    filled.forEach((b, idx) => b.forEach(() => flat.push(idx)));
+    // Distribute by Fisher-Yates over slot positions
+    const positions = [];
+    for (let i = 0; i < colorCount; i++) for (let j = 0; j < SLOT_COUNT; j++) positions.push(i);
+    for (let i = positions.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [positions[i], positions[j]] = [positions[j], positions[i]];
+    }
+    const scrambled = filled.map((_, idx) => positions.slice(idx*SLOT_COUNT, (idx+1)*SLOT_COUNT));
+    // Avoid the unlikely case where it's already solved
+    return [...scrambled, ...empties];
+  }
+
+  function isLocked(b) {
+    return b.length === SLOT_COUNT && b.every(c => c === b[0]);
+  }
+
+  function isComplete() {
+    return bottles.every(b => b.length === 0 || isLocked(b));
+  }
+
+  function topColor(b) { return b.length ? b[b.length - 1] : -1; }
+
+  function pour(fromIdx, toIdx) {
+    if (fromIdx === toIdx) return false;
+    const from = bottles[fromIdx];
+    const to = bottles[toIdx];
+    if (from.length === 0) return false;
+    if (to.length >= SLOT_COUNT) return false;
+    if (isLocked(from)) return false;
+    const color = topColor(from);
+    if (to.length > 0 && topColor(to) !== color) return false;
+    // Move all matching units from top of `from` while there's room in `to`
+    let moved = 0;
+    while (from.length > 0 && topColor(from) === color && to.length < SLOT_COUNT) {
+      to.push(from.pop());
+      moved++;
+    }
+    return moved > 0;
+  }
+
+  function render() {
+    stage.innerHTML = '';
+    bottles.forEach((b, i) => {
+      const el = document.createElement('div');
+      el.className = 'bottle';
+      el.style.setProperty('--slots', SLOT_COUNT);
+      if (i === selected) el.classList.add('selected');
+      if (isLocked(b)) el.classList.add('locked');
+      el.dataset.index = i;
+
+      const cork = document.createElement('div'); cork.className = 'cork';
+      const neck = document.createElement('div'); neck.className = 'neck';
+      const body = document.createElement('div'); body.className = 'body';
+      const stack = document.createElement('div'); stack.className = 'liquid-stack';
+      for (const ci of b) {
+        const seg = document.createElement('div');
+        seg.className = 'liquid';
+        seg.style.background = COLORS[ci];
+        stack.appendChild(seg);
+      }
+      body.appendChild(stack);
+      const shine = document.createElement('div'); shine.className = 'shine';
+      body.appendChild(shine);
+
+      el.appendChild(cork);
+      el.appendChild(neck);
+      el.appendChild(body);
+      stage.appendChild(el);
+    });
+  }
+
+  function flashInvalid(idx) {
+    const el = stage.children[idx];
+    if (!el) return;
+    el.classList.remove('invalid');
+    void el.offsetWidth;
+    el.classList.add('invalid');
+  }
+
+  function onTap(idx) {
+    if (busy) return;
+    const b = bottles[idx];
+    if (selected === -1) {
+      if (b.length === 0 || isLocked(b)) return;
+      selected = idx;
+      render();
+      return;
+    }
+    if (selected === idx) {
+      selected = -1;
+      render();
+      return;
+    }
+    const ok = pour(selected, idx);
+    if (!ok) {
+      flashInvalid(idx);
+      selected = -1;
+      render();
+      return;
+    }
+    selected = -1;
+    render();
+    if (isComplete()) {
+      status.textContent = '🎉 클리어!';
+    }
+  }
+
+  stage.addEventListener('click', (e) => {
+    const el = e.target.closest('.bottle');
+    if (!el) return;
+    onTap(Number(el.dataset.index));
+  });
+
+  document.getElementById('new').addEventListener('click', () => {
+    bottles = generate(6, 2);
+    selected = -1;
+    status.textContent = '병을 눌러 액체를 옮기세요';
+    render();
+  });
+  let initialBottles = null;
+  document.getElementById('restart').addEventListener('click', () => {
+    if (!initialBottles) return;
+    bottles = initialBottles.map(b => b.slice());
+    selected = -1;
+    status.textContent = '병을 눌러 액체를 옮기세요';
+    render();
+  });
+
+  function start() {
+    bottles = generate(6, 2);
+    initialBottles = bottles.map(b => b.slice());
+    render();
+  }
+  // Make restart capture each "new" snapshot
+  const newBtn = document.getElementById('new');
+  newBtn.addEventListener('click', () => {
+    initialBottles = bottles.map(b => b.slice());
+  });
+
+  start();
+})();
+</script>
+</body>
+</html>
