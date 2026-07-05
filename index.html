@@ -208,6 +208,8 @@
       <span id="difficultyLabel">—</span>
       <span class="dot">·</span>
       <span id="puzzleId">#······</span>
+      <span class="dot" id="challengeDot" hidden>·</span>
+      <span id="challengeLabel" hidden></span>
     </div>
 
     <div class="board-wrap">
@@ -263,7 +265,9 @@
     <div class="card">
       <h2>🎉 완성!</h2>
       <p id="winText">잘 했어요.</p>
+      <p id="winVs" hidden></p>
       <div class="grid2">
+        <button class="btn" id="winChallengeBtn" style="grid-column: 1 / -1">🏁 도전장 보내기</button>
         <button class="btn" id="winNew">새 게임</button>
         <button class="btn" id="winClose">닫기</button>
       </div>
@@ -314,6 +318,26 @@
     }
     count.n++;
     return count.n;
+  }
+
+  // First solution of a puzzle, or null. Challenge links carry only the
+  // givens; the solution is re-derived here (generated puzzles are unique).
+  function solveGrid(puzzle) {
+    const g = new Uint8Array(puzzle);
+    function fill(i) {
+      while (i < 81 && g[i] !== 0) i++;
+      if (i === 81) return true;
+      const r = Math.floor(i / 9), c = i % 9;
+      for (let v = 1; v <= 9; v++) {
+        if (isSafe(g, r, c, v)) {
+          g[i] = v;
+          if (fill(i + 1)) return true;
+          g[i] = 0;
+        }
+      }
+      return false;
+    }
+    return fill(0) ? g : null;
   }
 
   function fillSolution() {
@@ -374,6 +398,7 @@
     mistakes: 0,
     puzzleId: '······',
     recorded: false,              // whether this completion was already added to stats
+    challenge: null,              // {time, mistakes} — opponent record to beat, or null
   };
 
   // ---------- URL encoding ----------
@@ -395,7 +420,7 @@
 
   function encodeState() {
     const diffMap = { easy: 1, medium: 2, hard: 3, evil: 4 };
-    const buf = new Uint8Array(81 + 81 + 162 + 81 + 1 + 4 + 2);
+    const buf = new Uint8Array(81 + 81 + 162 + 81 + 1 + 4 + 2 + 7);
     let p = 0;
     buf.set(state.givens, p); p += 81;
     buf.set(state.values, p); p += 81;
@@ -414,6 +439,17 @@
     const mistakes = Math.min(0xffff, state.mistakes);
     buf[p++] = mistakes & 0xff;
     buf[p++] = (mistakes >> 8) & 0xff;
+    // Challenge block: flag(1) + opponent time(4) + opponent mistakes(2)
+    const ch = state.challenge;
+    buf[p++] = ch ? 1 : 0;
+    const ct = ch ? ch.time : 0;
+    buf[p++] = ct & 0xff;
+    buf[p++] = (ct >> 8) & 0xff;
+    buf[p++] = (ct >> 16) & 0xff;
+    buf[p++] = (ct >> 24) & 0xff;
+    const cm = ch ? Math.min(0xffff, ch.mistakes) : 0;
+    buf[p++] = cm & 0xff;
+    buf[p++] = (cm >> 8) & 0xff;
     return 'v1.' + toB64Url(buf);
   }
 
@@ -443,7 +479,47 @@
       mistakes = buf[p] | (buf[p + 1] << 8);
       p += 2;
     }
-    return { givens, values, memos, solution, difficulty, elapsed, mistakes };
+    let challenge = null;
+    if (buf.length >= p + 7 && buf[p] === 1) {
+      const time = buf[p + 1] | (buf[p + 2] << 8) | (buf[p + 3] << 16) | (buf[p + 4] << 24);
+      const chMistakes = buf[p + 5] | (buf[p + 6] << 8);
+      challenge = { time, mistakes: chMistakes };
+    }
+    return { givens, values, memos, solution, difficulty, elapsed, mistakes, challenge };
+  }
+
+  // Challenge link: "c1." + base64url( givens(81) + diff(1) + time(4) + mistakes(2) ).
+  // No solution inside — the receiver re-derives it with solveGrid().
+  function encodeChallenge(timeSec, mistakes) {
+    const diffMap = { easy: 1, medium: 2, hard: 3, evil: 4 };
+    const buf = new Uint8Array(81 + 1 + 4 + 2);
+    let p = 0;
+    buf.set(state.givens, p); p += 81;
+    buf[p++] = diffMap[state.difficulty] || 2;
+    buf[p++] = timeSec & 0xff;
+    buf[p++] = (timeSec >> 8) & 0xff;
+    buf[p++] = (timeSec >> 16) & 0xff;
+    buf[p++] = (timeSec >> 24) & 0xff;
+    const m = Math.min(0xffff, mistakes);
+    buf[p++] = m & 0xff;
+    buf[p++] = (m >> 8) & 0xff;
+    return 'c1.' + toB64Url(buf);
+  }
+
+  function decodeChallenge(hash) {
+    const buf = fromB64Url(hash.slice(3));
+    if (buf.length < 81 + 1 + 4 + 2) throw new Error('too short');
+    let p = 0;
+    const givens = buf.slice(p, p + 81); p += 81;
+    for (let i = 0; i < 81; i++) {
+      if (givens[i] > 9) throw new Error('bad givens');
+    }
+    const diffMap = { 1: 'easy', 2: 'medium', 3: 'hard', 4: 'evil' };
+    const difficulty = diffMap[buf[p++]] || 'medium';
+    const time = buf[p] | (buf[p + 1] << 8) | (buf[p + 2] << 16) | (buf[p + 3] << 24);
+    p += 4;
+    const mistakes = buf[p] | (buf[p + 1] << 8);
+    return { givens, difficulty, time, mistakes };
   }
 
   // 6-char identifier derived from givens. Same puzzle => same id.
@@ -472,6 +548,8 @@
   const timerEl = document.getElementById('timer');
   const difficultyLabel = document.getElementById('difficultyLabel');
   const puzzleIdEl = document.getElementById('puzzleId');
+  const challengeDotEl = document.getElementById('challengeDot');
+  const challengeLabelEl = document.getElementById('challengeLabel');
   const toastEl = document.getElementById('toast');
 
   const cellEls = [];
@@ -581,6 +659,10 @@
     memoBtn.classList.toggle('on', state.memoMode);
     difficultyLabel.textContent = labelFor(state.difficulty);
     puzzleIdEl.textContent = '#' + state.puzzleId;
+    const ch = state.challenge;
+    challengeDotEl.hidden = !ch;
+    challengeLabelEl.hidden = !ch;
+    if (ch) challengeLabelEl.textContent = '🏁 목표 ' + formatTime(ch.time);
   }
 
   function labelFor(d) {
@@ -899,6 +981,15 @@
       ? ` · 최고 ${formatTime(stats.bestTime)}`
       : '';
     w.textContent = `${labelFor(state.difficulty)} · ${formatTime(timeSec)}${perfectNote}${bestNote}`;
+    const vsEl = document.getElementById('winVs');
+    if (state.challenge) {
+      const ch = state.challenge;
+      const verdict = timeSec < ch.time ? '🏆 승리!' : (timeSec > ch.time ? '아쉽게 패배 😅' : '🤝 무승부!');
+      vsEl.textContent = `나 ${formatTime(timeSec)} vs 상대 ${formatTime(ch.time)} — ${verdict}`;
+      vsEl.hidden = false;
+    } else {
+      vsEl.hidden = true;
+    }
     winModal.classList.add('show');
   }
 
@@ -945,11 +1036,35 @@
     state.finished = false;
     state.mistakes = s.mistakes || 0;
     state.puzzleId = puzzleIdFor(state.givens);
+    state.challenge = s.challenge || null;
     // Resumed games shouldn't double-count toward stats; we mark recorded
     // only after the user finishes from a fresh newGame() call.
     state.recorded = false;
     tick();
     render();
+  }
+
+  function startChallenge(ch) {
+    const solution = solveGrid(ch.givens);
+    if (!solution) throw new Error('unsolvable challenge');
+    state.givens = new Uint8Array(ch.givens);
+    state.values = new Uint8Array(ch.givens);
+    state.memos = new Uint16Array(81);
+    state.solution = solution;
+    state.difficulty = ch.difficulty;
+    state.selected = null;
+    state.memoMode = false;
+    state.history = [];
+    state.finished = false;
+    state.elapsedBeforeStart = 0;
+    state.startTs = Date.now();
+    state.mistakes = 0;
+    state.puzzleId = puzzleIdFor(state.givens);
+    state.recorded = false;
+    state.challenge = { time: ch.time, mistakes: ch.mistakes };
+    persistAndRender();
+    tick();
+    toast(`🏁 도전장 도착! 목표 ${formatTime(ch.time)}`, 3500);
   }
 
   function newGame(difficulty) {
@@ -971,6 +1086,7 @@
       state.mistakes = 0;
       state.puzzleId = puzzleIdFor(state.givens);
       state.recorded = false;
+      state.challenge = null;
       persistAndRender();
       tick();
       hideToast();
@@ -981,6 +1097,10 @@
     const h = location.hash.replace(/^#/, '');
     if (!h) return false;
     try {
+      if (h.startsWith('c1.')) {
+        startChallenge(decodeChallenge(h));
+        return true;
+      }
       const s = decodeState(h);
       loadFromState(s);
       return true;
@@ -1001,9 +1121,7 @@
   }
 
   // ---------- Share ----------
-  async function share() {
-    persist();
-    const url = location.origin + location.pathname + '#' + encodeState();
+  async function shareUrl(url) {
     try {
       if (navigator.share) {
         await navigator.share({ title: '스도쿠', url });
@@ -1016,6 +1134,17 @@
     } catch (e) {
       prompt('아래 URL을 복사하세요', url);
     }
+  }
+
+  async function share() {
+    persist();
+    await shareUrl(location.origin + location.pathname + '#' + encodeState());
+  }
+
+  async function shareChallenge() {
+    if (!state.finished) return;
+    const hash = encodeChallenge(state.elapsedBeforeStart, state.mistakes);
+    await shareUrl(location.origin + location.pathname + '#' + hash);
   }
 
   // ---------- Toast ----------
@@ -1075,6 +1204,7 @@
       newGame(diff);
     }
   });
+  document.getElementById('winChallengeBtn').addEventListener('click', shareChallenge);
   document.getElementById('winClose').addEventListener('click', () => winModal.classList.remove('show'));
   document.getElementById('winNew').addEventListener('click', () => {
     winModal.classList.remove('show');
