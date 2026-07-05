@@ -70,10 +70,6 @@
     font-variant-numeric: tabular-nums;
   }
   .subheader .dot { opacity: 0.5; }
-  .subheader .mistakes.has { color: #d23a3a; font-weight: 600; }
-  @media (prefers-color-scheme: dark) {
-    .subheader .mistakes.has { color: #ff7a7a; }
-  }
   .stats-list { display: flex; flex-direction: column; gap: 6px; font-size: 13px; }
   .stats-list .row-stat { display: grid; grid-template-columns: 80px 1fr; gap: 8px; }
   .stats-list .row-stat .k { color: var(--muted); }
@@ -116,10 +112,6 @@
   .cell.selected { background: var(--sel); }
   .cell.conflict { background: var(--conflict); }
   .cell.conflict.selected { background: var(--conflict); }
-  .cell.wrong { color: #d23a3a; }
-  @media (prefers-color-scheme: dark) {
-    .cell.wrong { color: #ff7a7a; }
-  }
 
   .memo {
     position: absolute; inset: 4%;
@@ -216,8 +208,6 @@
       <span id="difficultyLabel">—</span>
       <span class="dot">·</span>
       <span id="puzzleId">#······</span>
-      <span class="dot">·</span>
-      <span class="mistakes" id="mistakes">실수 0</span>
     </div>
 
     <div class="board-wrap">
@@ -482,7 +472,6 @@
   const timerEl = document.getElementById('timer');
   const difficultyLabel = document.getElementById('difficultyLabel');
   const puzzleIdEl = document.getElementById('puzzleId');
-  const mistakesEl = document.getElementById('mistakes');
   const toastEl = document.getElementById('toast');
 
   const cellEls = [];
@@ -571,8 +560,6 @@
       cell.classList.toggle('same', cls === 'same');
       cell.classList.toggle('selected', cls === 'selected');
       cell.classList.toggle('conflict', conflicts.has(i));
-      const isWrong = !isGiven && v !== 0 && state.solution[i] !== 0 && v !== state.solution[i];
-      cell.classList.toggle('wrong', isWrong);
       cell._text.textContent = v ? String(v) : '';
       const memoSpans = cell._memo.children;
       const memo = state.memos[i];
@@ -594,8 +581,6 @@
     memoBtn.classList.toggle('on', state.memoMode);
     difficultyLabel.textContent = labelFor(state.difficulty);
     puzzleIdEl.textContent = '#' + state.puzzleId;
-    mistakesEl.textContent = '실수 ' + state.mistakes;
-    mistakesEl.classList.toggle('has', state.mistakes > 0);
   }
 
   function labelFor(d) {
@@ -820,7 +805,7 @@
       return;
     }
     if (h.error === 'wrong') {
-      toast('빨간 글씨 값을 먼저 확인해주세요');
+      toast('잘못 들어간 숫자가 있어요 — 먼저 바로잡아야 힌트를 드릴 수 있어요');
       return;
     }
     selectCell(h.idx);
