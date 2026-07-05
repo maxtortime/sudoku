@@ -63,6 +63,21 @@
     background: var(--panel); border: 1px solid var(--line); border-radius: 999px;
     padding: 4px 10px; font-variant-numeric: tabular-nums;
   }
+  .meta button.pill {
+    color: var(--ink); font: inherit; cursor: pointer;
+    min-width: 34px; touch-action: manipulation;
+  }
+  .meta button.pill:active { transform: scale(0.95); }
+
+  .pause-cover {
+    position: absolute; inset: 0; z-index: 5;
+    background: var(--panel);
+    border: 2px solid var(--line-strong); border-radius: 6px;
+    display: none; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+  }
+  .pause-cover.show { display: flex; }
+  .pause-cover .icon { font-size: 40px; }
+  .pause-cover .btn { flex: 0 0 auto; padding: 0 22px; }
   .subheader {
     display: flex; flex-wrap: wrap; gap: 6px 10px;
     font-size: 12px; color: var(--muted);
@@ -202,6 +217,7 @@
       <h1>스도쿠</h1>
       <div class="meta">
         <span class="pill" id="timer">00:00</span>
+        <button class="pill" id="pauseBtn" title="일시정지 (P)">⏸</button>
       </div>
     </header>
     <div class="subheader">
@@ -214,6 +230,10 @@
 
     <div class="board-wrap">
       <div class="board" id="board" aria-label="스도쿠 보드"></div>
+      <div class="pause-cover" id="pauseCover">
+        <div class="icon">⏸</div>
+        <button class="btn" id="resumeBtn">▶ 계속하기</button>
+      </div>
     </div>
 
     <div class="controls">
@@ -225,6 +245,7 @@
       </div>
       <div class="pad" id="pad"></div>
       <div class="row actions">
+        <button class="btn" id="restartBtn">↺ 새로하기</button>
         <button class="btn" id="newBtn">＋ 새 게임</button>
         <button class="btn" id="statsBtn">📊 통계</button>
         <button class="btn" id="shareBtn">⇪ 공유</button>
@@ -395,6 +416,7 @@
     startTs: Date.now(),
     elapsedBeforeStart: 0,
     finished: false,
+    paused: false,                // not persisted — reload resumes unpaused
     mistakes: 0,
     puzzleId: '······',
     recorded: false,              // whether this completion was already added to stats
@@ -711,7 +733,7 @@
   }
 
   function inputDigit(n) {
-    if (state.finished) return;
+    if (state.finished || state.paused) return;
     const i = state.selected;
     if (i === null) return;
     if (state.givens[i]) return;
@@ -752,7 +774,7 @@
   }
 
   function eraseSelected() {
-    if (state.finished) return;
+    if (state.finished || state.paused) return;
     const i = state.selected;
     if (i === null) return;
     if (state.givens[i]) return;
@@ -764,6 +786,7 @@
   }
 
   function undo() {
+    if (state.paused) return;
     const last = state.history.pop();
     if (!last) { toast('되돌릴 게 없어요'); return; }
     state.values[last.idx] = last.prev;
@@ -880,7 +903,7 @@
   }
 
   function showHint() {
-    if (state.finished) return;
+    if (state.finished || state.paused) return;
     const h = findHint();
     if (!h) {
       toast('네이키드/히든 싱글로는 더 없어요 — 다른 기법 필요');
@@ -957,10 +980,15 @@
   }
 
   // ---------- Win check ----------
-  function checkWin() {
+  function isSolvedNow() {
     for (let i = 0; i < 81; i++) {
-      if (state.values[i] !== state.solution[i]) return;
+      if (!state.solution[i] || state.values[i] !== state.solution[i]) return false;
     }
+    return true;
+  }
+
+  function checkWin() {
+    if (!isSolvedNow()) return;
     // Capture elapsed BEFORE flipping finished — currentElapsedSeconds()
     // returns only elapsedBeforeStart once finished is true, so the order
     // matters. Then freeze elapsedBeforeStart to the final value so the
@@ -969,6 +997,7 @@
     state.elapsedBeforeStart = timeSec;
     state.finished = true;
     tick();
+    updatePauseUI();
     if (!state.recorded) {
       recordCompletion(state.difficulty, timeSec, state.mistakes);
       state.recorded = true;
@@ -1011,8 +1040,31 @@
 
   // ---------- Timer ----------
   function currentElapsedSeconds() {
-    if (state.finished) return state.elapsedBeforeStart;
+    if (state.finished || state.paused) return state.elapsedBeforeStart;
     return state.elapsedBeforeStart + Math.floor((Date.now() - state.startTs) / 1000);
+  }
+
+  // ---------- Pause ----------
+  const pauseBtn = document.getElementById('pauseBtn');
+  const pauseCover = document.getElementById('pauseCover');
+  function updatePauseUI() {
+    pauseCover.classList.toggle('show', state.paused);
+    pauseBtn.textContent = state.paused ? '▶' : '⏸';
+    pauseBtn.hidden = state.finished;
+  }
+  function setPaused(p) {
+    if (state.finished || p === state.paused) return;
+    if (p) {
+      // Fold running time into elapsedBeforeStart so the clock freezes there.
+      state.elapsedBeforeStart = currentElapsedSeconds();
+      state.paused = true;
+      persist();
+    } else {
+      state.paused = false;
+      state.startTs = Date.now();
+    }
+    tick();
+    updatePauseUI();
   }
   function tick() {
     const s = currentElapsedSeconds();
@@ -1033,15 +1085,21 @@
     state.selected = null;
     state.memoMode = false;
     state.history = [];
-    state.finished = false;
+    state.paused = false;
+    // The finished flag isn't stored in the encoded state — derive it from
+    // the board so a completed puzzle stays frozen after reload instead of
+    // the timer silently running on.
+    state.finished = isSolvedNow();
     state.mistakes = s.mistakes || 0;
     state.puzzleId = puzzleIdFor(state.givens);
     state.challenge = s.challenge || null;
-    // Resumed games shouldn't double-count toward stats; we mark recorded
-    // only after the user finishes from a fresh newGame() call.
-    state.recorded = false;
+    // A game loaded already-finished was recorded when it was completed;
+    // marking it recorded blocks a duplicate stats entry via undo+redo.
+    state.recorded = state.finished;
     tick();
+    updatePauseUI();
     render();
+    if (state.finished) toast('이미 완성한 퍼즐이에요 — 새 게임을 시작해보세요');
   }
 
   function startChallenge(ch) {
@@ -1056,12 +1114,14 @@
     state.memoMode = false;
     state.history = [];
     state.finished = false;
+    state.paused = false;
     state.elapsedBeforeStart = 0;
     state.startTs = Date.now();
     state.mistakes = 0;
     state.puzzleId = puzzleIdFor(state.givens);
     state.recorded = false;
     state.challenge = { time: ch.time, mistakes: ch.mistakes };
+    updatePauseUI();
     persistAndRender();
     tick();
     toast(`🏁 도전장 도착! 목표 ${formatTime(ch.time)}`, 3500);
@@ -1081,16 +1141,38 @@
       state.memoMode = false;
       state.history = [];
       state.finished = false;
+      state.paused = false;
       state.elapsedBeforeStart = 0;
       state.startTs = Date.now();
       state.mistakes = 0;
       state.puzzleId = puzzleIdFor(state.givens);
       state.recorded = false;
       state.challenge = null;
+      updatePauseUI();
       persistAndRender();
       tick();
       hideToast();
     }, 30);
+  }
+
+  // Restart the SAME puzzle from scratch (vs newGame which generates a new one).
+  function restartGame() {
+    if (!confirm('이 퍼즐을 처음부터 다시 풀까요? 시간과 실수가 초기화됩니다.')) return;
+    state.values = new Uint8Array(state.givens);
+    state.memos = new Uint16Array(81);
+    state.selected = null;
+    state.memoMode = false;
+    state.history = [];
+    state.finished = false;
+    state.paused = false;
+    state.elapsedBeforeStart = 0;
+    state.startTs = Date.now();
+    state.mistakes = 0;
+    state.recorded = false;
+    winModal.classList.remove('show');
+    updatePauseUI();
+    persistAndRender();
+    tick();
   }
 
   function tryLoadFromHash() {
@@ -1174,6 +1256,7 @@
     if (code === 'ArrowRight') { e.preventDefault(); moveSelection(0, 1); return; }
     if (code === 'KeyM') { e.preventDefault(); toggleMemo(); return; }
     if (code === 'KeyH') { e.preventDefault(); showHint(); return; }
+    if (code === 'KeyP' || code === 'Space') { e.preventDefault(); setPaused(!state.paused); return; }
     if ((e.ctrlKey || e.metaKey) && code === 'KeyZ') { e.preventDefault(); undo(); return; }
   });
 
@@ -1183,6 +1266,9 @@
   eraseBtn.addEventListener('click', eraseSelected);
   hintBtn.addEventListener('click', showHint);
   newBtn.addEventListener('click', () => newModal.classList.add('show'));
+  document.getElementById('restartBtn').addEventListener('click', restartGame);
+  pauseBtn.addEventListener('click', () => setPaused(!state.paused));
+  document.getElementById('resumeBtn').addEventListener('click', () => setPaused(false));
   shareBtn.addEventListener('click', share);
   statsBtn.addEventListener('click', () => { renderStats(); statsModal.classList.add('show'); });
   document.getElementById('statsClose').addEventListener('click', () => statsModal.classList.remove('show'));
